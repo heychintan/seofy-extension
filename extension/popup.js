@@ -5,7 +5,7 @@ const $$ = sel => [...document.querySelectorAll(sel)];
 
 const state = {
   data: null,         // result of scrapePage
-  tab:  'images',     // initial tab (matches aria-current in markup)
+  tab:  'overview',   // initial tab (matches aria-current in markup)
   // images sub-state
   imgTypes: new Set(['ALL']),
   imgView:  'list',

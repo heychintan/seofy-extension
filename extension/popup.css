@@ -69,6 +69,43 @@ body {
   background: oklch(28% 0.06 275);
 }
 
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 10px 4px 8px;
+  margin-right: 2px;
+  flex-shrink: 0;
+  user-select: none;
+}
+.brand-mark {
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  background: var(--accent);
+  color: var(--surface);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.brand-mark svg { width: 13px; height: 13px; }
+.brand-name {
+  font-family: 'Instrument Serif', serif;
+  font-style: italic;
+  font-weight: 400;
+  font-size: 17px;
+  letter-spacing: 0.04em;
+  color: var(--nav-ink);
+  line-height: 1;
+}
+.nav-sep {
+  width: 1px;
+  height: 18px;
+  background: oklch(40% 0.05 275);
+  margin: 0 6px 0 4px;
+  flex-shrink: 0;
+}
+
 /* ---------- panel ---------- */
 .panel {
   background: var(--surface);
