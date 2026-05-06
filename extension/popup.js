@@ -43,7 +43,7 @@ async function init() {
   renderLinks();
   renderImages();
   renderSchema();
-  renderSocial();
+  renderMeta();
   renderAdvanced();
 
   showTab(state.tab);
@@ -72,6 +72,7 @@ function scrapePage() {
     schema:   [],
     og:       {},
     twitter:  {},
+    meta:     [], // all <meta> tags (name | property | http-equiv | charset)
     hreflang: [],
   };
 
@@ -233,6 +234,22 @@ function scrapePage() {
     const k = m.getAttribute('name');
     const v = m.getAttribute('content');
     if (k && v != null) out.twitter[k] = v;
+  });
+
+  // every <meta> tag — keep raw so the Meta tab can show the full picture
+  document.querySelectorAll('meta').forEach(m => {
+    const name     = m.getAttribute('name');
+    const property = m.getAttribute('property');
+    const httpEq   = m.getAttribute('http-equiv');
+    const charset  = m.getAttribute('charset');
+    const content  = m.getAttribute('content');
+    let key, kind;
+    if (name)          { key = name;     kind = 'name'; }
+    else if (property) { key = property; kind = 'property'; }
+    else if (httpEq)   { key = httpEq;   kind = 'http-equiv'; }
+    else if (charset)  { key = 'charset'; kind = 'charset'; }
+    else return;
+    out.meta.push({ key, kind, value: charset != null ? charset : (content ?? '') });
   });
 
   // hreflang
@@ -446,7 +463,7 @@ function renderLinks() {
       if (l.target === '_blank') tags.push(`<span class="badge info">_blank</span>`);
       body += `
         <div class="linkrow">
-          <span class="anchor ${l.anchor ? '' : 'empty'}">${l.anchor ? escapeHtml(l.anchor) : 'No anchor text'}</span>
+          <span class="anchor ${l.anchor ? '' : 'noanchor'}">${l.anchor ? escapeHtml(l.anchor) : 'No anchor text'}</span>
           <span class="meta-tags">${tags.join('')}</span>
           <span class="url"><a href="${escapeHtml(l.url)}" target="_blank" rel="noopener">${escapeHtml(l.url)}</a>${copyBtn(l.url, 'Copy link URL', 'inline')}${openBtn(l.url, 'Open link', 'inline')}</span>
         </div>`;
@@ -793,24 +810,42 @@ function renderSchema() {
     return `<div class="srow leaf"><span class="sk">${escapeHtml(key)}</span>${primVal(val)}</div>`;
   };
 
-  let body = `<div class="schema">`;
-  flat.forEach(({ item, src }, idx) => {
+  // group by @type, preserving first-seen order
+  const groups = new Map();
+  flat.forEach(({ item, src }) => {
     const tag = typeOf(item);
-    const lbl = labelFor(item);
-    const json = JSON.stringify(item, null, 2);
-    const entries = Object.entries(item || {});
-    const open = idx === 0 ? ' open' : '';
-    body += `<details class="sdoc"${open}>
-      <summary class="sdoc-head">
+    if (!groups.has(tag)) groups.set(tag, []);
+    groups.get(tag).push({ item, src, tag });
+  });
+
+  let body = `<div class="schema">`;
+  groups.forEach((items, tag) => {
+    const groupJson = JSON.stringify(items.map(i => i.item), null, 2);
+    body += `<details class="sgroup">
+      <summary class="sgroup-head">
         <span class="schev"></span>
         <span class="sdoc-type">${escapeHtml(tag)}</span>
-        ${lbl ? `<span class="sdoc-name">${escapeHtml(lbl)}</span>` : ''}
+        <span class="sgroup-count">${items.length}</span>
         <span class="sdoc-spacer"></span>
-        <span class="sdoc-src">${escapeHtml(src)}</span>
-        ${copyBtn(json, 'Copy JSON', 'always')}
+        ${copyBtn(groupJson, 'Copy JSON', 'always')}
       </summary>
-      <div class="sdoc-body">${entries.map(([k, v]) => renderRow(k, v)).join('')}</div>
-    </details>`;
+      <div class="sgroup-body">`;
+    items.forEach(({ item, src }) => {
+      const lbl = labelFor(item);
+      const json = JSON.stringify(item, null, 2);
+      const entries = Object.entries(item || {});
+      body += `<details class="sdoc">
+        <summary class="sdoc-head">
+          <span class="schev"></span>
+          ${lbl ? `<span class="sdoc-name">${escapeHtml(lbl)}</span>` : `<span class="sdoc-name muted">(no name)</span>`}
+          <span class="sdoc-spacer"></span>
+          <span class="sdoc-src">${escapeHtml(src)}</span>
+          ${copyBtn(json, 'Copy JSON', 'always')}
+        </summary>
+        <div class="sdoc-body">${entries.map(([k, v]) => renderRow(k, v)).join('')}</div>
+      </details>`;
+    });
+    body += `</div></details>`;
   });
   body += `</div>`;
 
@@ -818,53 +853,82 @@ function renderSchema() {
 }
 
 // =============================================================
-// SOCIAL
+// META — all <meta> tags grouped (Primary / Open Graph / Twitter / Other)
+// All inserted strings pass through escapeHtml; URLs flow through the same
+// helpers (copyBtn / dlBtn) used elsewhere, which already escape attributes.
 // =============================================================
-function renderSocial() {
-  const og = state.data.og;
-  const tw = state.data.twitter;
+function renderMeta() {
+  const d = state.data;
+  const all = d.meta || [];
 
-  const ogKeys = Object.keys(og);
-  const twKeys = Object.keys(tw);
+  const primary = [
+    { key: 'title',       value: d.title,       kind: 'tag' },
+    { key: 'description', value: d.description, kind: 'name' },
+    { key: 'canonical',   value: d.canonical,   kind: 'link' },
+    { key: 'robots',      value: d.robots,      kind: 'name' },
+    { key: 'viewport',    value: d.viewport,    kind: 'name' },
+    { key: 'charset',     value: d.charset,     kind: 'charset' },
+    { key: 'lang',        value: d.lang,        kind: 'attr' },
+  ].filter(r => r.value);
 
-  if (ogKeys.length === 0 && twKeys.length === 0) {
-    $('#tab-social').innerHTML = `<div class="empty"><span class="em">No social tags.</span>No Open Graph or Twitter meta tags were found.</div>`;
+  const og      = all.filter(m => m.kind === 'property' && /^(og|article|profile):/i.test(m.key));
+  const twitter = all.filter(m => m.kind === 'name'     && /^twitter:/i.test(m.key));
+
+  const primaryNames = new Set(['description', 'robots', 'viewport']);
+  const other = all.filter(m => {
+    if (m.kind === 'property' && /^(og|article|profile):/i.test(m.key)) return false;
+    if (m.kind === 'name' && /^twitter:/i.test(m.key)) return false;
+    if (m.kind === 'name' && primaryNames.has(m.key.toLowerCase())) return false;
+    if (m.kind === 'charset') return false;
+    return true;
+  });
+
+  if (primary.length === 0 && og.length === 0 && twitter.length === 0 && other.length === 0) {
+    $('#tab-meta').textContent = '';
+    $('#tab-meta').appendChild(elt('div', 'empty', `<span class="em">No meta tags.</span>This page has no &lt;meta&gt; data.`));
     return;
   }
 
-  const renderGroup = (title, badge, obj) => {
-    const keys = Object.keys(obj);
-    if (keys.length === 0) return '';
-    let html = `<div class="field" style="grid-template-columns:1fr;border-top:1px solid var(--line-2);padding-bottom:6px">
-      <div class="label" style="justify-content:space-between">
-        <span style="display:inline-flex;gap:9px;align-items:center"><span class="ico">${ICONS.globe}</span>${escapeHtml(title)}</span>
-        <span class="badge ${badge}">${keys.length}</span>
-      </div>
-    </div>`;
-    keys.sort().forEach(k => {
-      const v = obj[k];
-      const isUrl = /^https?:\/\//i.test(v);
-      const isImg = /image$/i.test(k) && isUrl;
-      const valueText = isUrl
-        ? `<a href="${escapeHtml(v)}" target="_blank" rel="noopener" style="color:var(--accent);text-decoration:none">${escapeHtml(v)}</a>`
-        : escapeHtml(v);
-      const inlineCopy = copyBtn(v, `Copy ${k}`, 'inline');
-      const dlAction   = isImg ? dlBtn(v, k.replace(/[:]/g, '_') + '.img', `Download ${k}`, 'inline') : '';
-      html += `<div class="field" style="grid-template-columns:1fr;padding-top:8px;padding-bottom:8px">
-        <div class="label" style="font-weight:500;font-size:12px;color:var(--muted);font-family:'JetBrains Mono',monospace">${escapeHtml(k)}</div>
-        <div class="value prose" style="grid-column:1;display:flex;gap:10px;align-items:flex-start">
-          ${isImg ? `<img src="${escapeHtml(v)}" alt="" referrerpolicy="no-referrer" loading="lazy" style="width:64px;height:48px;object-fit:cover;border-radius:6px;border:1px solid var(--line);flex-shrink:0">` : ''}
-          <span style="min-width:0;flex:1;word-break:break-word">${valueText}${inlineCopy}${dlAction}</span>
-        </div>
-      </div>`;
-    });
-    return html;
+  const groupHTML = (title, items, open) => {
+    if (!items.length) return '';
+    const rows = items.map(m => metaRowHTML(m)).join('');
+    return `<details class="mgroup"${open ? ' open' : ''}>
+        <summary class="mgroup-head">
+          <span class="schev"></span>
+          <span class="mgroup-title">${escapeHtml(title)}</span>
+          <span class="mgroup-count">${items.length}</span>
+        </summary>
+        <div class="mgroup-body">${rows}</div>
+      </details>`;
   };
 
-  $('#tab-social').innerHTML = `<div class="fields">
-    ${renderGroup('Open Graph', 'info', og)}
-    ${renderGroup('Twitter Card', 'info', tw)}
-  </div>`;
+  const html =
+    `<div class="meta-tab">` +
+    groupHTML('Primary',      primary, true) +
+    groupHTML('Open Graph',   og,      true) +
+    groupHTML('Twitter Card', twitter, true) +
+    groupHTML('Other',        other,   false) +
+    `</div>`;
+  $('#tab-meta').innerHTML = html;
+}
+
+function metaRowHTML(m) {
+  const v = m.value;
+  const isUrl = /^https?:\/\//i.test(v);
+  const isImg = /(^|:)image(:?$|:url$)/i.test(m.key) && isUrl;
+  const valueHTML = isUrl
+    ? `<a href="${escapeHtml(v)}" target="_blank" rel="noopener" class="mval-link">${escapeHtml(v)}</a>`
+    : `<span class="mval-text">${escapeHtml(v)}</span>`;
+  const thumb = isImg
+    ? `<img class="mval-thumb" src="${escapeHtml(v)}" alt="" referrerpolicy="no-referrer" loading="lazy">`
+    : '';
+  const dl = isImg ? dlBtn(v, m.key.replace(/[:]/g, '_') + '.img', `Download ${m.key}`, 'inline') : '';
+  const copy = v ? copyBtn(v, `Copy ${m.key}`, 'inline') : '';
+  return `<div class="mrow">
+      <span class="mkey">${escapeHtml(m.key)}</span>
+      <div class="mval">${thumb}<div class="mval-inner">${valueHTML}</div></div>
+      <div class="mact">${copy}${dl}</div>
+    </div>`;
 }
 
 // =============================================================
